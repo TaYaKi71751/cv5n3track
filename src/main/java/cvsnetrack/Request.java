@@ -1,15 +1,16 @@
 package cvsnetrack;
 
 import java.io.IOException;
-import java.util.HashMap;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-import org.jsoup.nodes.Node;
-import org.jsoup.select.Elements;
-
-import lombok.NonNull;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 
 //https://www.cvsnet.co.kr/
 //reservation-inquiry/delivery
@@ -28,68 +29,39 @@ import lombok.NonNull;
 // // 01 : 주문번호
 // // 02 : 운송장 번호
 
+//invoice/tracking.do?
+//invoice_no : 운송장번호
+
 public class Request {
-    public interface CvsTrack {
-        String getMatch(String keyFromMessage, String keyFromDlvry_Type);
+    protected String invoice_no;
+    protected JsonObject info,receiver,sender,latestTrackingDetail;
+    JsonElement serviceName, goodsName,carrierName;
+    protected JsonArray trackingDetails;
+
+    class InvalidInvoiceNoException extends Exception {
+
     }
 
-    public static final String mainURI = "https://www.cvsnet.co.kr/";
-    public static final String subDirectory = "reservation-inquiry/delivery/index.do?";
-    public static final String firefoxUserAgent = "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:5.0) Gecko/20100101 Firefox/5.0";
-    public final HashMap<String, String> dlvry_type = new HashMap<String, String>() {
-        {
-            put("국내", "domestic");
-            put("퀵", "day");
-            put("반값", "slow");
-            put("국제", "international");
-            put("픽업", "pickup");
-        }
-    };
-
-    public Document getCvsTrackDocument(@NonNull String invoice_no, @NonNull String dlvry_type, String srch_type)
-            throws IOException {
-        return Jsoup.connect(mainURI + subDirectory + "dlvry_type=" + getDlvryType(dlvry_type) + "&invoice_no="
-                + invoice_no + (srch_type != null ? "&srch_type=" + srch_type : "")).userAgent(firefoxUserAgent).get();
+    public Boolean isNumOnly() {
+        return invoice_no.matches("^[0-9]+$") ? true : false;
     }
 
-    public String getCvsTrackNowStatus(@NonNull Document cvsDocument) throws IOException {
-        Elements cvsTrackImagElements = cvsDocument.getElementsByClass("onImage");
-        for (int i = 0; i < cvsTrackImagElements.size(); i++) {
-            if (cvsTrackImagElements.get(i).parentNode().attr("class").toString().contains("on"))
-                return cvsTrackImagElements.get(i).parentNode().childNode(2).toString();
-            else
-                continue;
-        }
-        return null;
+    public void getInfo() throws URISyntaxException, IOException, InterruptedException {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://www.cvsnet.co.kr/invoice/tracking.do?invoice_no=" + invoice_no)).build();
+        HttpResponse response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        String str = (str = (str = response.body().toString()).substring(str.indexOf("track"), str.indexOf(";")))
+                .replace(str.substring(str.indexOf("track"), str.indexOf("=") + 1), "");
+        info = new Gson().fromJson(str, JsonObject.class);
+
+        receiver = info.getAsJsonObject("receiver");
+        sender = info.getAsJsonObject("sender");
+        trackingDetails = info.getAsJsonArray("trackingDetails");
+        serviceName = info.get("serviceName");
+        goodsName = info.get("goodsName");
+        carrierName = info.get("carrierName");
+        latestTrackingDetail = info.getAsJsonObject("latestTrackingDetail");
+        return;
     }
-
-    public String getInvoiceNo(@NonNull Document cvsDocument) {
-        return cvsDocument.getElementsByClass(".num").get(0).childNode(0).toString();
-    }
-
-    public Elements getRow(@NonNull Document cvsDocument) {
-        return cvsDocument.getElementsByAttributeValue("scope", "row");
-    }
-
-    public String getDlvryType(@NonNull String dlvry_type) {
-        return this.dlvry_type.get(dlvry_type);
-    }
-
-    public HashMap<String, String> getRowMap(@NonNull Elements rowElements) {
-        rowElements.trimToSize();
-        HashMap<String, String> rowMap = new HashMap<String, String>();
-        for (int i = 0; i < rowElements.size(); i++) {
-            for (int j = 1; j < rowElements.get(i).parentNode().childNodeSize(); j += 4) {
-                if (!(rowElements.get(i).parentNode().childNode(j).hasAttr("scope")))
-                    continue;
-                rowMap.put(rowElements.get(i).parentNode().childNode(j).childNode(0).toString(),
-                        rowElements.get(i).parentNode().childNode(j + 2).childNodeSize() == 0 ? "해당 정보 없음"
-                                : rowElements.get(i).parentNode().childNode(j + 2).childNode(0).toString()
-                                        .replaceAll("(^\\p{Z}+|\\p{Z}+$)", ""));
-
-            }
-        }
-        return rowMap;
-    }
-
 }
